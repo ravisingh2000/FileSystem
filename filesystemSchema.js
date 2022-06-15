@@ -6,13 +6,13 @@ const sqlite3 = require("sqlite3").verbose()
 // name of table:filesystem
 const db = new sqlite3.Database("./FileSystem.db", sqlite3.OPEN_READWRITE, (err) => {
     if (err) return console.error(err.message);
-    console.log("connection sucessfull")
+    console.log("connection sucessfully")
 })
 
-//Here I use filepath to check whether file exist or not we can also use forloop to check path exit or not
+//Here I use filepath to check whether file exist or not we can also use forloop to check path exist or not
 // for that i use this table schema
 function createTable() {
-    db.run("CREATE TABLE filesystem(DirectoryIndex INTEGER ,Parent_directory INTEGER,Name TEXT UNIQUE,Content TEXT,Type TEXT,Filepath TEXT,DateCreated TEXT,DateModified TEXT)")
+    db.run("CREATE TABLE filesystem(DirectoryIndex INTEGER PRIMARY KEY AUTOINCREMENT ,Parent_directory INTEGER,Name TEXT UNIQUE,Content TEXT,Type TEXT,Filepath TEXT,DateCreated TEXT,DateModified TEXT)")
 }
 
 //Wrap the query with promise
@@ -30,45 +30,56 @@ function select(newquery) {
 }
 
 async function create(path, type) {
+    if (path == '/') return false;
     let finalpath = path.split("/");
-    // console.log(finalpath);
-    const newElement = finalpath[finalpath.length - 1]
-    finalpath = path.replace(('/' + newElement), '')
-    let content;
-    // console.log(finalpath, path, type, newElement);
+    const newElement = finalpath.pop();
+    finalpath = finalpath.join('/')
     let parentDirectory = 0;
+    let content;
     if (finalpath != '') {
+        //check given path for inserting that element is exist or not
         const checkPathExist = await select(`SELECT * FROM filesystem where FilePath='${finalpath}'  `)
-        if (checkPathExist.length <= 0) {
+        if (checkPathExist.length == 0) {
             return false;
         }
         else {
+            //given path is exist so I store  parentdirectory index
             parentDirectory = checkPathExist[0].DirectoryIndex
         }
     }
-    console.log(parentDirectory);
+
+    //check new inserted element already exist or not
     const checkNewElementExist = await select(`SELECT * FROM filesystem where FilePath='${path}'  `)
     if (checkNewElementExist.length > 0) {
         return false;
     }
+    //then inserted element to given path
     let rowCount = await select(`SELECT COUNT(*) FROM filesystem`)
     if (type == 'file') content = "file fresh content "; else null
     const createdDate = new Date(Date.now()).toISOString()
-    db.run(`INSERT INTO filesystem(DirectoryIndex, Parent_directory, Name,Content,Type,FilePath,DateCreated)VALUES(?,?,?,?,?,?,?)`, [rowCount[0]['COUNT(*)'] + 1, parentDirectory, newElement, content, type, path, createdDate], (err) => {
+    db.run(`INSERT INTO filesystem( Parent_directory, Name,Content,Type,FilePath,DateCreated)VALUES(?,?,?,?,?,?)`, [parentDirectory, newElement, content, type, path, createdDate], (err) => {
         if (err) return console.error(err.message);
-        console.log("data is inserted")
+        console.log("Element is inserted")
     })
+    return true;
 }
 
-async function Scan(dir_path) {
+async function scan(dir_path) {
     //here I check all sub elments of that
-    let elements = await select(`SELECT * FROM filesystem WHERE Parent_directory=(SELECT DirectoryIndex FROM filesystem WHERE FilePath='${dir_path}')`)
+    let elements;
+    if (dir_path == '/') {
+        //for root directory 
+        elements = await select(`SELECT * FROM filesystem WHERE Parent_directory=0`)
+    }
+    else {
+        // for other than root directory 
+        elements = await select(`SELECT * FROM filesystem WHERE Parent_directory=(SELECT DirectoryIndex FROM filesystem WHERE FilePath='${dir_path}')`)
+    }
     if (elements.length > 0) {
         elements = elements.map((value) => {
             return value.Name;
         })
     }
-    console.log(elements);
     return elements;
 }
 
@@ -78,18 +89,18 @@ async function read(file_path) {
     if (filecontent.length == 0 || filecontent[0].Type == 'folder') {
         return null;
     }
-    console.log(filecontent);
     return filecontent[0].Content
 }
+
 async function write(file_path, string_content) {
+    //file path  is exist or not
     let filecontent = await select(`SELECT * FROM filesystem WHERE FilePath='${file_path}'`)
-    console.log('FF');
-    console.log(filecontent);
     if (filecontent.length == 0 || filecontent[0].Type == 'folder') {
         return false;
     }
+    //updated file content
     const updatedDate = new Date(Date.now()).toISOString()
-    let updatecontent = db.run(`UPDATE filesystem SET Content = '${string_content}', DateModified= '${updatedDate}' WHERE FilePath='${file_path}' `, (err) => {
+    db.run(`UPDATE filesystem SET Content = '${string_content}', DateModified= '${updatedDate}' WHERE FilePath='${file_path}' `, (err) => {
         if (err) return console.error(err.message);
         console.log("CONTENT IS UPDATED")
     })
@@ -97,13 +108,14 @@ async function write(file_path, string_content) {
     return true;
 }
 async function rename(elm_path, new_name) {
+    //element path is exist or not
     let filecontent = await select(`SELECT * FROM filesystem WHERE FilePath='${elm_path}'`)
-    console.log(filecontent);
-    if (filecontent.length == 0 || filecontent[0].Type == 'folder') {
+    if (filecontent.length == 0) {
         return false;
     }
+    //rename the name of element
     const updatedDate = new Date(Date.now()).toISOString()
-    let updatecontent = db.run(`UPDATE filesystem SET Name = '${new_name}', DateModified= '${updatedDate}' WHERE FilePath='${elm_path}' `, (err) => {
+    db.run(`UPDATE filesystem SET Name = '${new_name}', DateModified= '${updatedDate}' WHERE FilePath='${elm_path}' `, (err) => {
         if (err) return console.error(err.message);
         console.log("NAME IS UPDATED")
     })
@@ -112,43 +124,38 @@ async function rename(elm_path, new_name) {
 }
 
 async function mtime(file_path) {
-
+    //element path is exist or not
     let filecontent = await select(`SELECT * FROM filesystem WHERE FilePath='${file_path}'`)
     if (filecontent.length == 0) {
         return -1;
     }
-    console.log(filecontent);
-    var date = new Date(filecontent[0].DateModified);
-    var unixTimeStamp = Math.floor(date.getTime() / 1000);
-    console.log(unixTimeStamp);
+    //return modified unixtime
+    const date = new Date(filecontent[0].DateModified);
+    const unixTimeStamp = Math.floor(date.getTime() / 1000);
     return unixTimeStamp
 }
 async function ctime(file_path) {
-
+    //element path is exist or not
     let filecontent = await select(`SELECT * FROM filesystem WHERE FilePath='${file_path}'`)
     if (filecontent.length == 0) {
         return -1;
     }
-    console.log(filecontent);
-    var date = new Date(filecontent[0].DateCreated);
-    var unixTimeStamp = Math.floor(date.getTime() / 1000);
-    console.log(unixTimeStamp);
+    //return created unixtime
+    const date = new Date(filecontent[0].DateCreated);
+    const unixTimeStamp = Math.floor(date.getTime() / 1000);
     return unixTimeStamp
 }
-// console.log(mtime('/mn/gg/ll/jj/ddd.txt'));
+
 async function deleteElement(elem_path) {
-    // for (let path in fulllpath) {
-    // message = await select(`SELECT * FROM  filesystem WHERE Name=${path};`))
-    // let filecontent = await select(`SELECT * FROM filesystem WHERE FilePath='${elem_path}'`)
-    const checkNewElementExist = await select(`SELECT * FROM filesystem where FilePath='${elem_path}'  `)
-    console.log(checkNewElementExist);
-    if (checkNewElementExist.length == 0) {
-        console.log('Delete element NOT exist');
+    //element path is exist or not
+    const delElementExist = await select(`SELECT * FROM filesystem where FilePath='${elem_path}'  `)
+    if (delElementExist.length == 0) {
+        console.log('Delete Element NOT Exist');
         return false;
     }
-
-    if (checkNewElementExist[0].Type == 'file') {
-        db.run(`DELETE FROM filesystem WHERE  DirectoryIndex=${checkNewElementExist[0].DirectoryIndex}; `, (err) => {
+    // path contain last element file
+    if (delElementExist[0].Type == 'file') {
+        db.run(`DELETE FROM filesystem WHERE  DirectoryIndex=${delElementExist[0].DirectoryIndex}; `, (err) => {
             if (err) return console.error(err.message);
             console.log("File Deleted sucessfully");
         })
@@ -156,25 +163,31 @@ async function deleteElement(elem_path) {
     }
 
     else {
-
-        //recursive query then i use for that
-        let deletedElements = await select(`WITH virtualDeleteTable(DirectoryIndex, Name,Parent_directory)  AS(
-            SELECT i.DirectoryIndex,i.Name,i.Parent_directory From filesystem i where   i.DirectoryIndex=${checkNewElementExist[0].DirectoryIndex}
+        //recursive query   to delete folder and  it's subfolder
+        let deletedElements = await select(`WITH Recursive virtualDeleteTable(DirectoryIndex, Name,Parent_directory)  AS(
+            SELECT i.DirectoryIndex,i.Name,i.Parent_directory From filesystem i where   i.DirectoryIndex=${delElementExist[0].DirectoryIndex}
             UNION ALL
             SELECT i.DirectoryIndex,i.Name,i.Parent_directory FROM  filesystem i Join virtualDeleteTable j
-            ON j.DirectoryIndex=i.Parent_directory)
+            ON j.DirectoryIndex==i.Parent_directory)
             SELECT * FROM virtualDeleteTable;`)
         if (deletedElements.length == 0) {
             return false;
         }
-        console.log(deletedElements);
+        //subfolder deleted
         for (let deletedIndexed in deletedElements) {
-            console.log(deletedIndexed);
-            db.run(`DELETE FROM filesystem WHERE  DirectoryIndex=${deletedElements[deletedIndexed].DirectoryIndex} `, (err) => {
-                if (err) return console.error(err.message);
-                console.log("Folder Deleted sucessfully");
-            })
+            if (delElementExist[0].DirectoryIndex != deletedElements[deletedIndexed].DirectoryIndex) {
+                db.run(`DELETE FROM filesystem WHERE  DirectoryIndex=${deletedElements[deletedIndexed].DirectoryIndex} `, (err) => {
+                    if (err) return console.error(err.message);
+                    console.log(`[${deletedElements[deletedIndexed].Name}] Subfolder Deleted `);
+                })
+            }
         }
+
+        //then parentelement is deleted
+        db.run(`DELETE FROM filesystem WHERE  DirectoryIndex=${delElementExist[0].DirectoryIndex} `, (err) => {
+            if (err) return console.error(err.messge);
+            console.log(`[${delElementExist[0].DirectoryIndex.Name}] Folder Deleted `);
+        })
         return true;
 
     }
@@ -184,47 +197,97 @@ async function move(elm_path, dir_path) {
     let currentpath = elm_path.split("/")
     let moveElement = currentpath.pop()
     currentpath = currentpath.join('/')
-    console.log(dir_path.includes(currentpath));
-    if (dir_path.includes(currentpath)) {
-        return true;
+
+    //here I check folder can't move to it subfolder
+    if (dir_path.includes(elm_path)) {
+        return false;
     }
-    console.log(elm_path);
-    const checkOldPath = await select(`SELECT * FROM filesystem where FilePath='${elm_path}'  `)
-    console.log(checkOldPath);
-    const newPath = await select(`SELECT * FROM filesystem where FilePath='${dir_path}'  `)
-    console.log("jj");
-    console.log(newPath);
+
+    const previousPath = await select(`SELECT * FROM filesystem where FilePath='${elm_path}'  `)
+    const newpath = await select(`SELECT * FROM filesystem where FilePath='${dir_path}'  `)
+    if (previousPath == 0 || newpath == 0 || newpath[0].Type == 'file') {
+        return false;
+    }
+    // here I get all the subfolders or file of moved directory
+    let elements = await select(`WITH Recursive virtualDeleteTable(DirectoryIndex, Name,Parent_directory,Filepath)  AS(
+        SELECT i.DirectoryIndex,i.Name,i.Parent_directory,i.Filepath From filesystem i where   i.DirectoryIndex=${previousPath[0].DirectoryIndex}
+        UNION ALL
+        SELECT i.DirectoryIndex,i.Name,i.Parent_directory,i.Filepath FROM  filesystem i Join virtualDeleteTable j
+        ON j.DirectoryIndex==i.Parent_directory)
+        SELECT * FROM virtualDeleteTable;`)
+    const updatedDate = new Date(Date.now()).toISOString()
+
+    //then  updated filepath and datemodified of all subfolder of movedirectory
+    for (let elementIndex in elements) {
+        if (elements[elementIndex].Parent_directory != previousPath[0].DirectoryIndex) {
+            let newfilePath = dir_path + elements[elementIndex].Filepath.split(currentpath)[1]
+            db.run(`UPDATE filesystem SET filePath = '${newfilePath}' , DateModified='${updatedDate}' WHERE DirectoryIndex='${elements[elementIndex].DirectoryIndex}' `, (err) => {
+                if (err) return console.error(err.message);
+                // console.log("UPDATED")
+            })
+
+        }
+    }
+    //then i linked moveddirectory to   newdirectory or file
     let newfilePath = dir_path + '/' + moveElement;
-    db.run(`UPDATE filesystem SET  Parent_directory=${newPath[0].DirectoryIndex},FilePath='${newfilePath}', DateModified = '${newPath[0].DateModified}' WHERE DirectoryIndex = ${checkOldPath[0].DirectoryIndex} `, (err) => {
+    db.run(`UPDATE filesystem SET  Parent_directory=${newpath[0].DirectoryIndex},FilePath='${newfilePath}', DateModified= '${updatedDate}' WHERE DirectoryIndex = ${previousPath[0].DirectoryIndex} `, (err) => {
         if (err) return console.error(err.message);
-        console.log("CONTENT2 IS UPDATED")
+        // console.log(" UPDATED")
     })
+
     return true;
 
 }
 async function tableData() {
     try {
-        const selectsql = 'SELECT * FROM  filesystem;'
+        const selectsql = 'SELECT * FROM filesystem;'
         let message = await select(selectsql)
-        console.log(message);
+        return message
+
     }
     catch (error) {
         console.log(error);
     }
 }
 //All function for filesystem Schema
-// createTable()
-// deleteElement("/ravi")
-create('/pnb', 'folder')
-// ctime('/yesbank/mean.txt')
-// mtime('/mn/gg/ll/jj/ddd.txt', 'newSone')
-// Scan('/ravi')
-// write('/mn/gg/ll/jj/ddd.txt', 'newSone')
-// rename('/pnb/mean.txt', 'newSone.txt')
-// move('/ui/mean.txt', '/ravi')
-// read('/jj');
-tableData()
+async function fileSystemLibrary() {
 
+    // createTable()
+
+    // let createstatus = await create('/sbi/ux', 'folder')
+    // console.log(createstatus);
+
+    // let movestatus = await move('/pnb/io', '/op/jk')
+    // console.log(movestatus);
+
+    // let scanstatus = await scan('/pnb/ux/ui')
+    // console.log(scanstatus);
+
+    // let deletestatus = await deleteElement("/UH/JK")
+    // console.log(deletestatus);
+
+    // let createdTime = await ctime('/yesbank/mean.txt')
+    // console.log(createdTime);
+
+    // let modifiedTime = await mtime('/op/jk/io', 'newSone')
+    // console.log(modifiedTime);
+
+    // let writestatus = await write('/op/jk/io.txt', 'newSone')
+    // console.log(writestatus);
+
+    // let renamestatus = await rename('/pnb', 'new')
+    // console.log(renamestatus);
+
+    // let readstatus = await read('/op/jk/io.txt');
+    // console.log(readstatus);
+
+    //table data
+    let tablestatus = await tableData()
+    console.log(tablestatus);
+
+}
+
+fileSystemLibrary()
 
 
 // db.close((err) => {
